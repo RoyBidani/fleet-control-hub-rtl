@@ -488,7 +488,6 @@ For questions or issues:
 
 ---
 
-**Fleet Control Hub System - Built with ❤️ in Israel**
-
+**Fleet Control Hub System**
 *Version: 1.0.0*  
 *Last Updated: July 2025*
