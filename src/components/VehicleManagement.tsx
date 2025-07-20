@@ -7,26 +7,21 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Car, Plus, Edit, Trash2, ArrowRight, CheckCircle, AlertTriangle } from 'lucide-react';
-
-interface Vehicle {
-  id: string;
-  plateNumber: string;
-  model: string;
-  barcode: string;
-  maintenanceStatus: 'תקין' | 'דורש טיפול';
-  addedDate: string;
-}
+import { Car, Plus, Edit, Trash2, ArrowRight, CheckCircle, AlertTriangle, QrCode, Eye } from 'lucide-react';
+import { apiService, Vehicle } from '../services/api';
+import QRCode from 'qrcode';
 
 interface VehicleManagementProps {
   onBack: () => void;
+  onNavigateToVehicleDetails?: (vehicleId: string) => void;
 }
 
-const VehicleManagement: React.FC<VehicleManagementProps> = ({ onBack }) => {
+const VehicleManagement: React.FC<VehicleManagementProps> = ({ onBack, onNavigateToVehicleDetails }) => {
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingVehicle, setEditingVehicle] = useState<Vehicle | null>(null);
   const [alert, setAlert] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [loading, setLoading] = useState(false);
 
   const [formData, setFormData] = useState({
     plateNumber: '',
@@ -36,73 +31,65 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({ onBack }) => {
   });
 
   useEffect(() => {
-    // Load vehicles from localStorage
-    const savedVehicles = localStorage.getItem('vehicles');
-    if (savedVehicles) {
-      setVehicles(JSON.parse(savedVehicles));
-    } else {
-      // Initialize with sample data
-      const sampleVehicles: Vehicle[] = [
-        {
-          id: '1',
-          plateNumber: '123-45-678',
-          model: 'טויוטה קורולה',
-          barcode: 'BAR001',
-          maintenanceStatus: 'תקין',
-          addedDate: '2024-01-15'
-        },
-        {
-          id: '2',
-          plateNumber: '987-65-432',
-          model: 'הונדה סיוויק',
-          barcode: 'BAR002',
-          maintenanceStatus: 'דורש טיפול',
-          addedDate: '2024-02-10'
-        }
-      ];
-      setVehicles(sampleVehicles);
-      localStorage.setItem('vehicles', JSON.stringify(sampleVehicles));
-    }
+    loadVehicles();
   }, []);
 
-  const saveVehicles = (newVehicles: Vehicle[]) => {
-    setVehicles(newVehicles);
-    localStorage.setItem('vehicles', JSON.stringify(newVehicles));
+  const loadVehicles = async () => {
+    try {
+      setLoading(true);
+      const vehicleData = await apiService.getVehicles();
+      setVehicles(vehicleData);
+    } catch (error) {
+      console.error('Error loading vehicles:', error);
+      setAlert({ type: 'error', message: 'שגיאה בטעינת הרכבים' });
+      setTimeout(() => setAlert(null), 3000);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (editingVehicle) {
-      // Update existing vehicle
-      const updatedVehicles = vehicles.map(v => 
-        v.id === editingVehicle.id 
-          ? { ...editingVehicle, ...formData }
-          : v
-      );
-      saveVehicles(updatedVehicles);
-      setAlert({ type: 'success', message: 'הרכב עודכן בהצלחה!' });
-      setEditingVehicle(null);
-    } else {
-      // Add new vehicle
-      const newVehicle: Vehicle = {
-        id: Date.now().toString(),
-        ...formData,
-        addedDate: new Date().toISOString().split('T')[0]
-      };
-      saveVehicles([...vehicles, newVehicle]);
-      setAlert({ type: 'success', message: 'הרכב נוסף בהצלחה!' });
+    try {
+      setLoading(true);
+      
+      if (editingVehicle) {
+        // Update existing vehicle
+        await apiService.updateVehicle(editingVehicle.id, formData);
+        setAlert({ type: 'success', message: 'הרכב עודכן בהצלחה!' });
+        setEditingVehicle(null);
+      } else {
+        // Add new vehicle
+        const newVehicle = await apiService.createVehicle(formData);
+        
+        // Generate QR code for the new vehicle
+        const vehicleUrl = `${window.location.origin}/vehicle/${newVehicle.id}`;
+        await QRCode.toDataURL(vehicleUrl);
+        
+        setAlert({ type: 'success', message: 'הרכב נוסף בהצלחה! נוצר QR Code עבור הרכב.' });
+      }
+
+      // Reload vehicles from server
+      await loadVehicles();
+      
+      setFormData({
+        plateNumber: '',
+        model: '',
+        barcode: '',
+        maintenanceStatus: 'תקין'
+      });
+      setShowAddForm(false);
+
+      setTimeout(() => setAlert(null), 3000);
+    } catch (error) {
+      console.error('Error saving vehicle:', error);
+      setAlert({ type: 'error', message: 'שגיאה בשמירת הרכב' });
+      setTimeout(() => setAlert(null), 3000);
+    } finally {
+      setLoading(false);
     }
-
-    setFormData({
-      plateNumber: '',
-      model: '',
-      barcode: '',
-      maintenanceStatus: 'תקין'
-    });
-    setShowAddForm(false);
-
-    setTimeout(() => setAlert(null), 3000);
   };
 
   const handleEdit = (vehicle: Vehicle) => {
@@ -116,12 +103,21 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({ onBack }) => {
     setShowAddForm(true);
   };
 
-  const handleDelete = (vehicleId: string) => {
+  const handleDelete = async (vehicleId: string) => {
     if (confirm('האם אתם בטוחים שברצונכם למחוק את הרכב?')) {
-      const updatedVehicles = vehicles.filter(v => v.id !== vehicleId);
-      saveVehicles(updatedVehicles);
-      setAlert({ type: 'success', message: 'הרכב נמחק בהצלחה!' });
-      setTimeout(() => setAlert(null), 3000);
+      try {
+        setLoading(true);
+        await apiService.deleteVehicle(vehicleId);
+        await loadVehicles();
+        setAlert({ type: 'success', message: 'הרכב נמחק בהצלחה!' });
+        setTimeout(() => setAlert(null), 3000);
+      } catch (error) {
+        console.error('Error deleting vehicle:', error);
+        setAlert({ type: 'error', message: 'שגיאה במחיקת הרכב' });
+        setTimeout(() => setAlert(null), 3000);
+      } finally {
+        setLoading(false);
+      }
     }
   };
 
@@ -249,10 +245,10 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({ onBack }) => {
                 </div>
                 
                 <div className="flex gap-3 pt-4">
-                  <Button type="submit" className="fleet-btn fleet-primary text-white">
-                    {editingVehicle ? 'עדכן רכב' : 'הוסף רכב'}
+                  <Button type="submit" className="fleet-btn fleet-primary text-white" disabled={loading}>
+                    {loading ? 'מעבד...' : editingVehicle ? 'עדכן רכב' : 'הוסף רכב'}
                   </Button>
-                  <Button type="button" variant="outline" onClick={handleCancel}>
+                  <Button type="button" variant="outline" onClick={handleCancel} disabled={loading}>
                     ביטול
                   </Button>
                 </div>
@@ -265,7 +261,12 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({ onBack }) => {
         <div className="space-y-4">
           <h3 className="text-lg font-semibold text-gray-900">רשימת רכבים ({vehicles.length})</h3>
           
-          {vehicles.length === 0 ? (
+          {loading ? (
+            <Card className="fleet-card text-center py-12">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+              <p className="text-gray-600">טוען רכבים...</p>
+            </Card>
+          ) : vehicles.length === 0 ? (
             <Card className="fleet-card text-center py-12">
               <Car className="w-12 h-12 text-gray-400 mx-auto mb-4" />
               <p className="text-gray-600">אין רכבים במערכת</p>
@@ -306,6 +307,17 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({ onBack }) => {
                     </div>
                     
                     <div className="flex gap-2">
+                      {onNavigateToVehicleDetails && (
+                        <Button 
+                          size="sm" 
+                          variant="outline" 
+                          onClick={() => onNavigateToVehicleDetails(vehicle.id)}
+                          className="flex items-center gap-1 flex-1"
+                        >
+                          <Eye className="w-3 h-3" />
+                          פרטים
+                        </Button>
+                      )}
                       <Button 
                         size="sm" 
                         variant="outline" 

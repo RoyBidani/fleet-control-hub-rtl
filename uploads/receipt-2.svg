@@ -1,0 +1,5 @@
+<svg width="200" height="150" xmlns="http://www.w3.org/2000/svg">
+  <rect width="200" height="150" fill="#e8f5e8"/>
+  <text x="100" y="70" text-anchor="middle" font-family="Arial" font-size="16" fill="#000">קבלה תחזוקה</text>
+  <text x="100" y="90" text-anchor="middle" font-family="Arial" font-size="20" fill="#000">₪180</text>
+</svg>

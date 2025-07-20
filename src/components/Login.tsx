@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Lock, User, Car } from 'lucide-react';
+import { apiService } from '../services/api';
 
 interface LoginProps {
   onLogin: () => void;
@@ -22,15 +23,28 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
     setError('');
     setIsLoading(true);
 
-    // Simulate loading delay
-    await new Promise(resolve => setTimeout(resolve, 1000));
-
-    if (username === 'admin' && password === '1234') {
-      sessionStorage.setItem('isLoggedIn', 'true');
-      sessionStorage.setItem('loginTime', new Date().toISOString());
-      onLogin();
-    } else {
-      setError('שם משתמש או סיסמה שגויים');
+    try {
+      const response = await apiService.login(username, password);
+      
+      if (response.success) {
+        sessionStorage.setItem('isLoggedIn', 'true');
+        sessionStorage.setItem('loginTime', new Date().toISOString());
+        sessionStorage.setItem('user', JSON.stringify(response.user));
+        onLogin();
+      } else {
+        setError('שם משתמש או סיסמה שגויים');
+      }
+    } catch (error) {
+      console.error('Login error:', error);
+      // Fallback to hardcoded credentials if DynamoDB is not available
+      if (username === 'admin' && password === '1234') {
+        sessionStorage.setItem('isLoggedIn', 'true');
+        sessionStorage.setItem('loginTime', new Date().toISOString());
+        sessionStorage.setItem('user', JSON.stringify({ username: 'admin', role: 'admin' }));
+        onLogin();
+      } else {
+        setError('שגיאה בהתחברות או שם משתמש/סיסמה שגויים');
+      }
     }
 
     setIsLoading(false);

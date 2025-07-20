@@ -9,25 +9,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Wrench, Plus, Trash2, ArrowRight, Calendar, FileText, Car, CheckCircle, Clock, Upload } from 'lucide-react';
-
-interface MaintenanceRecord {
-  id: string;
-  vehicleId: string;
-  vehiclePlateNumber: string;
-  serviceType: string;
-  date: string;
-  notes: string;
-  cost?: number;
-  addedDate: string;
-  completed: boolean;
-  tasks: Array<{
-    id: string;
-    description: string;
-    completed: boolean;
-  }>;
-  receiptImage?: string;
-}
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Wrench, Plus, Trash2, ArrowRight, Calendar, FileText, Car, CheckCircle, Clock, Upload, Scan } from 'lucide-react';
+import { apiService, Vehicle, MaintenanceRecord } from '../services/api';
 
 interface MaintenanceProps {
   onBack: () => void;
@@ -35,9 +19,11 @@ interface MaintenanceProps {
 
 const Maintenance: React.FC<MaintenanceProps> = ({ onBack }) => {
   const [maintenanceRecords, setMaintenanceRecords] = useState<MaintenanceRecord[]>([]);
-  const [vehicles, setVehicles] = useState<any[]>([]);
+  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [showAddForm, setShowAddForm] = useState(false);
   const [alert, setAlert] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [mounted, setMounted] = useState(false);
 
   const [formData, setFormData] = useState({
     vehicleId: '',
@@ -46,8 +32,12 @@ const Maintenance: React.FC<MaintenanceProps> = ({ onBack }) => {
     notes: '',
     cost: '',
     tasks: '',
-    receiptImage: null as File | null
+    receiptImage: null as File | string | null
   });
+
+  const [showBarcodeScanner, setShowBarcodeScanner] = useState(false);
+  const [selectedRecord, setSelectedRecord] = useState<MaintenanceRecord | null>(null);
+  const [showRecordDetails, setShowRecordDetails] = useState(false);
 
   const serviceTypes = [
     'שירות שמן',
@@ -65,44 +55,98 @@ const Maintenance: React.FC<MaintenanceProps> = ({ onBack }) => {
   ];
 
   useEffect(() => {
+    console.log('Maintenance component mounted');
+    setMounted(true);
     loadData();
+    
+    return () => {
+      console.log('Maintenance component unmounted');
+    };
   }, []);
 
-  const loadData = () => {
-    // Load vehicles
-    const savedVehicles = localStorage.getItem('vehicles');
-    if (savedVehicles) {
-      setVehicles(JSON.parse(savedVehicles));
-    }
-
-    // Load maintenance records
-    const savedRecords = localStorage.getItem('maintenanceRecords');
-    if (savedRecords) {
-      const records = JSON.parse(savedRecords);
-      // Ensure all records have the new fields
-      const updatedRecords = records.map((record: any) => ({
-        ...record,
-        completed: record.completed ?? false,
-        tasks: record.tasks ?? [],
-        receiptImage: record.receiptImage ?? null
-      }));
-      setMaintenanceRecords(updatedRecords);
+  const loadData = async () => {
+    try {
+      setLoading(true);
+      console.log('Loading maintenance data...');
+      
+      const [vehicleData, maintenanceData] = await Promise.all([
+        apiService.getVehicles(),
+        apiService.getMaintenanceRecords()
+      ]);
+      
+      console.log('Vehicle data:', vehicleData);
+      console.log('Maintenance data:', maintenanceData);
+      
+      setVehicles(vehicleData || []);
+      setMaintenanceRecords(maintenanceData || []);
+    } catch (error) {
+      console.error('Error loading data:', error);
+      setAlert({ type: 'error', message: 'שגיאה בטעינת הנתונים' });
+      setTimeout(() => setAlert(null), 5000);
+      
+      // Set empty arrays to prevent the component from crashing
+      setVehicles([]);
+      setMaintenanceRecords([]);
+    } finally {
+      setLoading(false);
     }
   };
 
-  const saveMaintenanceRecords = (newRecords: MaintenanceRecord[]) => {
-    setMaintenanceRecords(newRecords);
-    localStorage.setItem('maintenanceRecords', JSON.stringify(newRecords));
-  };
 
-  const handleReceiptUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleReceiptUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      setFormData({...formData, receiptImage: file});
+      try {
+        const uploadedFile = await apiService.uploadPhoto(file, formData.vehicleId || 'temp');
+        setFormData({...formData, receiptImage: uploadedFile.filename});
+        setAlert({ type: 'success', message: 'קובץ הקבלה הועלה בהצלחה!' });
+        setTimeout(() => setAlert(null), 3000);
+      } catch (error) {
+        console.error('Error uploading receipt:', error);
+        setAlert({ type: 'error', message: 'שגיאה בהעלאת קובץ הקבלה' });
+        setTimeout(() => setAlert(null), 3000);
+      }
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const startBarcodeScanning = async () => {
+    try {
+      setShowBarcodeScanner(true);
+      
+      // Request camera permission
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { 
+          facingMode: 'environment' // Use back camera if available
+        } 
+      });
+      
+      // For now, use a simple prompt as a fallback
+      const scannedCode = prompt('אנא הזן את הברקוד שסרקתם:');
+      if (scannedCode) {
+        // Find vehicle by barcode
+        const vehicle = vehicles.find(v => v.barcode === scannedCode);
+        if (vehicle) {
+          setFormData({...formData, vehicleId: vehicle.id});
+          setAlert({ type: 'success', message: `רכב נמצא: ${vehicle.plateNumber}` });
+          setTimeout(() => setAlert(null), 3000);
+        } else {
+          setAlert({ type: 'error', message: 'ברקוד לא נמצא במערכת' });
+          setTimeout(() => setAlert(null), 3000);
+        }
+      }
+      
+      // Stop camera
+      stream.getTracks().forEach(track => track.stop());
+      setShowBarcodeScanner(false);
+    } catch (error) {
+      console.error('Error accessing camera:', error);
+      setAlert({ type: 'error', message: 'לא ניתן לגשת למצלמה. אנא בחר רכב מהרשימה.' });
+      setTimeout(() => setAlert(null), 3000);
+      setShowBarcodeScanner(false);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
     const selectedVehicle = vehicles.find(v => v.id === formData.vehicleId);
@@ -111,78 +155,102 @@ const Maintenance: React.FC<MaintenanceProps> = ({ onBack }) => {
       return;
     }
 
-    // Parse tasks from text input
-    const tasks = formData.tasks
-      .split('\n')
-      .filter(task => task.trim())
-      .map(task => ({
-        id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
-        description: task.trim(),
-        completed: false
-      }));
+    try {
+      setLoading(true);
 
-    const newRecord: MaintenanceRecord = {
-      id: Date.now().toString(),
-      vehicleId: formData.vehicleId,
-      vehiclePlateNumber: selectedVehicle.plateNumber,
-      serviceType: formData.serviceType,
-      date: formData.date,
-      notes: formData.notes,
-      cost: formData.cost ? parseFloat(formData.cost) : undefined,
-      addedDate: new Date().toISOString().split('T')[0],
-      completed: false,
-      tasks: tasks,
-      receiptImage: formData.receiptImage?.name
-    };
+      // Parse tasks from text input
+      const tasks = formData.tasks
+        .split('\n')
+        .filter(task => task.trim())
+        .map(task => ({
+          id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+          description: task.trim(),
+          completed: false
+        }));
 
-    saveMaintenanceRecords([...maintenanceRecords, newRecord]);
-    setAlert({ type: 'success', message: 'פעולת התחזוקה נוספה בהצלחה!' });
+      const newRecord = {
+        vehicleId: formData.vehicleId,
+        vehiclePlateNumber: selectedVehicle.plateNumber,
+        serviceType: formData.serviceType,
+        date: formData.date,
+        notes: formData.notes,
+        cost: formData.cost ? parseFloat(formData.cost) : undefined,
+        completed: false,
+        tasks: tasks,
+        receiptImage: typeof formData.receiptImage === 'string' ? formData.receiptImage : formData.receiptImage?.name
+      };
 
-    setFormData({
-      vehicleId: '',
-      serviceType: '',
-      date: '',
-      notes: '',
-      cost: '',
-      tasks: '',
-      receiptImage: null
-    });
-    setShowAddForm(false);
+      await apiService.createMaintenanceRecord(newRecord);
+      await loadData();
+      setAlert({ type: 'success', message: 'פעולת התחזוקה נוספה בהצלחה!' });
 
-    setTimeout(() => setAlert(null), 3000);
-  };
+      setFormData({
+        vehicleId: '',
+        serviceType: '',
+        date: '',
+        notes: '',
+        cost: '',
+        tasks: '',
+        receiptImage: null
+      });
+      setShowAddForm(false);
 
-  const toggleMaintenanceCompletion = (recordId: string) => {
-    const updatedRecords = maintenanceRecords.map(record => 
-      record.id === recordId 
-        ? { ...record, completed: !record.completed }
-        : record
-    );
-    saveMaintenanceRecords(updatedRecords);
-  };
-
-  const toggleTaskCompletion = (recordId: string, taskId: string) => {
-    const updatedRecords = maintenanceRecords.map(record => 
-      record.id === recordId 
-        ? {
-            ...record,
-            tasks: record.tasks.map(task =>
-              task.id === taskId 
-                ? { ...task, completed: !task.completed }
-                : task
-            )
-          }
-        : record
-    );
-    saveMaintenanceRecords(updatedRecords);
-  };
-
-  const handleDelete = (recordId: string) => {
-    if (confirm('האם אתם בטוחים שברצונכם למחוק את רשומת התחזוקה?')) {
-      const updatedRecords = maintenanceRecords.filter(r => r.id !== recordId);
-      saveMaintenanceRecords(updatedRecords);
-      setAlert({ type: 'success', message: 'רשומת התחזוקה נמחקה בהצלחה!' });
       setTimeout(() => setAlert(null), 3000);
+    } catch (error) {
+      console.error('Error creating maintenance record:', error);
+      setAlert({ type: 'error', message: 'שגיאה בשמירת פעולת התחזוקה' });
+      setTimeout(() => setAlert(null), 3000);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const toggleMaintenanceCompletion = async (recordId: string) => {
+    try {
+      const record = maintenanceRecords.find(r => r.id === recordId);
+      if (!record) return;
+      
+      await apiService.updateMaintenanceRecord(recordId, { completed: !record.completed });
+      await loadData();
+    } catch (error) {
+      console.error('Error updating maintenance record:', error);
+      setAlert({ type: 'error', message: 'שגיאה בעדכון סטטוס התחזוקה' });
+      setTimeout(() => setAlert(null), 3000);
+    }
+  };
+
+  const toggleTaskCompletion = async (recordId: string, taskId: string) => {
+    try {
+      const record = maintenanceRecords.find(r => r.id === recordId);
+      if (!record) return;
+      
+      const updatedTasks = record.tasks.map(task =>
+        task.id === taskId 
+          ? { ...task, completed: !task.completed }
+          : task
+      );
+      
+      await apiService.updateMaintenanceRecord(recordId, { tasks: updatedTasks });
+      await loadData();
+    } catch (error) {
+      console.error('Error updating task:', error);
+      setAlert({ type: 'error', message: 'שגיאה בעדכון המשימה' });
+      setTimeout(() => setAlert(null), 3000);
+    }
+  };
+
+  const handleDelete = async (recordId: string) => {
+    if (confirm('האם אתם בטוחים שברצונכם למחוק את רשומת התחזוקה?')) {
+      try {
+        await apiService.deleteMaintenanceRecord(recordId);
+        await loadData();
+        setAlert({ type: 'success', message: 'רשומת התחזוקה נמחקה בהצלחה!' });
+        setTimeout(() => setAlert(null), 3000);
+      } catch (error) {
+        console.error('Error deleting maintenance record:', error);
+        setAlert({ type: 'error', message: 'שגיאה במחיקת רשומת התחזוקה' });
+        setTimeout(() => setAlert(null), 3000);
+      }
     }
   };
 
@@ -199,6 +267,11 @@ const Maintenance: React.FC<MaintenanceProps> = ({ onBack }) => {
     });
   };
 
+  const handleRecordClick = (record: MaintenanceRecord) => {
+    setSelectedRecord(record);
+    setShowRecordDetails(true);
+  };
+
   const getTotalCost = () => {
     return maintenanceRecords
       .filter(record => record.cost)
@@ -207,15 +280,27 @@ const Maintenance: React.FC<MaintenanceProps> = ({ onBack }) => {
 
   const getCompletionStats = () => {
     const total = maintenanceRecords.length;
-    const completed = maintenanceRecords.filter(r => r.completed).length;
+    const completed = maintenanceRecords.filter(r => r && r.completed).length;
     const openTasks = maintenanceRecords
-      .flatMap(r => r.tasks)
-      .filter(t => !t.completed).length;
+      .flatMap(r => r && r.tasks ? r.tasks : [])
+      .filter(t => t && !t.completed).length;
     
     return { total, completed, open: total - completed, openTasks };
   };
 
   const stats = getCompletionStats();
+
+  // Debug: Force render a simple test first
+  if (!mounted) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-gray-50 to-green-50 flex items-center justify-center">
+        <div className="text-center">
+          <h1 className="text-2xl font-bold text-gray-900">טוען עמוד תחזוקה...</h1>
+          <p className="text-gray-600">מערכת התחזוקה בטעינה</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-green-50">
@@ -236,6 +321,128 @@ const Maintenance: React.FC<MaintenanceProps> = ({ onBack }) => {
           </div>
         </div>
       </header>
+
+      {/* Maintenance Record Details Dialog */}
+      <Dialog open={showRecordDetails} onOpenChange={setShowRecordDetails}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>פרטי פעולת תחזוקה</DialogTitle>
+          </DialogHeader>
+          {selectedRecord && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <span className="text-sm font-medium text-gray-700">רכב:</span>
+                  <p className="text-sm">{selectedRecord.vehiclePlateNumber}</p>
+                </div>
+                <div>
+                  <span className="text-sm font-medium text-gray-700">סוג פעולה:</span>
+                  <p className="text-sm">{selectedRecord.serviceType}</p>
+                </div>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <span className="text-sm font-medium text-gray-700">תאריך:</span>
+                  <p className="text-sm">{selectedRecord.date}</p>
+                </div>
+                <div>
+                  <span className="text-sm font-medium text-gray-700">עלות:</span>
+                  <p className="text-sm">{selectedRecord.cost ? `₪${selectedRecord.cost.toLocaleString()}` : 'לא צוין'}</p>
+                </div>
+              </div>
+              
+              <div>
+                <span className="text-sm font-medium text-gray-700">סטטוס:</span>
+                <Badge className={selectedRecord.completed ? 'bg-green-100 text-green-800 ml-2' : 'bg-yellow-100 text-yellow-800 ml-2'}>
+                  {selectedRecord.completed ? 'הושלם' : 'בתהליך'}
+                </Badge>
+              </div>
+              
+              {selectedRecord.tasks && selectedRecord.tasks.length > 0 && (
+                <div>
+                  <span className="text-sm font-medium text-gray-700">משימות:</span>
+                  <div className="mt-2 space-y-1">
+                    {selectedRecord.tasks.map(task => (
+                      <div key={task.id} className="flex items-center gap-2 text-sm">
+                        <Checkbox checked={task.completed} readOnly />
+                        <span className={task.completed ? 'line-through text-gray-500' : ''}>
+                          {task.description}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              
+              {selectedRecord.notes && (
+                <div>
+                  <span className="text-sm font-medium text-gray-700">הערות:</span>
+                  <p className="text-sm mt-1 p-3 bg-gray-50 rounded">{selectedRecord.notes}</p>
+                </div>
+              )}
+              
+              {selectedRecord.receiptImage && (
+                <div>
+                  <span className="text-sm font-medium text-gray-700">קבלה:</span>
+                  <div className="mt-2">
+                    <div className="flex items-center gap-2">
+                      {(selectedRecord.receiptImage.endsWith('.html') || selectedRecord.receiptImage.endsWith('.txt') || selectedRecord.receiptImage.endsWith('.json')) ? (
+                        <div className="flex items-center gap-2">
+                          <div className="w-32 h-20 bg-gray-100 border rounded-lg flex items-center justify-center cursor-pointer hover:bg-gray-200 transition-colors"
+                               onClick={() => window.open(`/api/photos/${selectedRecord.receiptImage}`, '_blank')}>
+                            <div className="text-center">
+                              <FileText className="w-8 h-8 text-gray-500 mx-auto mb-1" />
+                              <span className="text-xs text-gray-600">קבלה</span>
+                            </div>
+                          </div>
+                          <Badge variant="outline" className="flex items-center gap-1">
+                            <Upload className="w-3 h-3" />
+                            לחץ לצפייה
+                          </Badge>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <img 
+                            src={`/api/photos/${selectedRecord.receiptImage}`} 
+                            alt="Receipt" 
+                            className="w-32 h-32 object-cover rounded-lg border cursor-pointer hover:opacity-75 transition-opacity"
+                            onClick={() => window.open(`/api/photos/${selectedRecord.receiptImage}`, '_blank')}
+                            onError={(e) => {
+                              e.target.style.display = 'none';
+                              e.target.nextElementSibling.style.display = 'flex';
+                            }}
+                          />
+                          <div className="w-32 h-32 bg-gray-100 border rounded-lg items-center justify-center cursor-pointer hover:bg-gray-200 transition-colors hidden"
+                               onClick={() => window.open(`/api/photos/${selectedRecord.receiptImage}`, '_blank')}>
+                            <div className="text-center">
+                              <Upload className="w-8 h-8 text-gray-500 mx-auto mb-1" />
+                              <span className="text-xs text-gray-600">תמונה לא נמצאה</span>
+                            </div>
+                          </div>
+                          <Badge variant="outline" className="flex items-center gap-1">
+                            <Upload className="w-3 h-3" />
+                            לחץ לצפייה
+                          </Badge>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              <div className="flex justify-end gap-2 pt-4">
+                <Button 
+                  variant="outline" 
+                  onClick={() => setShowRecordDetails(false)}
+                >
+                  סגור
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {alert && (
@@ -327,21 +534,42 @@ const Maintenance: React.FC<MaintenanceProps> = ({ onBack }) => {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label htmlFor="vehicleId">רכב</Label>
-                    <Select 
-                      value={formData.vehicleId} 
-                      onValueChange={(value) => setFormData({...formData, vehicleId: value})}
-                    >
-                      <SelectTrigger className="text-right">
-                        <SelectValue placeholder="בחרו רכב" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {vehicles.map(vehicle => (
-                          <SelectItem key={vehicle.id} value={vehicle.id}>
-                            {vehicle.plateNumber} - {vehicle.model}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <div className="flex gap-2">
+                      <Select 
+                        value={formData.vehicleId} 
+                        onValueChange={(value) => setFormData({...formData, vehicleId: value})}
+                      >
+                        <SelectTrigger className="text-right flex-1">
+                          <SelectValue placeholder="בחרו רכב או סרקו ברקוד" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {vehicles.map(vehicle => (
+                            <SelectItem key={vehicle.id} value={vehicle.id}>
+                              {vehicle.plateNumber} - {vehicle.model}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={startBarcodeScanning}
+                        className="flex items-center gap-2 px-4"
+                        disabled={showBarcodeScanner}
+                      >
+                        {showBarcodeScanner ? (
+                          <>
+                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                            סורק...
+                          </>
+                        ) : (
+                          <>
+                            <Scan className="w-4 h-4" />
+                            סרוק
+                          </>
+                        )}
+                      </Button>
+                    </div>
                   </div>
                   
                   <div className="space-y-2">
@@ -400,7 +628,7 @@ const Maintenance: React.FC<MaintenanceProps> = ({ onBack }) => {
                     />
                     {formData.receiptImage && (
                       <p className="text-sm text-green-600">
-                        נבחר קובץ: {formData.receiptImage.name}
+                        נבחר קובץ: {typeof formData.receiptImage === 'string' ? formData.receiptImage : formData.receiptImage.name}
                       </p>
                     )}
                   </div>
@@ -431,10 +659,10 @@ const Maintenance: React.FC<MaintenanceProps> = ({ onBack }) => {
                 </div>
                 
                 <div className="flex gap-3 pt-4">
-                  <Button type="submit" className="fleet-btn fleet-secondary text-white">
-                    הוסף פעולת תחזוקה
+                  <Button type="submit" className="fleet-btn fleet-secondary text-white" disabled={loading}>
+                    {loading ? 'מעבד...' : 'הוסף פעולת תחזוקה'}
                   </Button>
-                  <Button type="button" variant="outline" onClick={handleCancel}>
+                  <Button type="button" variant="outline" onClick={handleCancel} disabled={loading}>
                     ביטול
                   </Button>
                 </div>
@@ -458,8 +686,9 @@ const Maintenance: React.FC<MaintenanceProps> = ({ onBack }) => {
               {maintenanceRecords.map((record, index) => (
                 <Card 
                   key={record.id} 
-                  className={`fleet-card slide-in-right ${record.completed ? 'bg-green-50 border-green-200' : ''}`}
+                  className={`fleet-card slide-in-right cursor-pointer hover:shadow-lg transition-shadow ${record.completed ? 'bg-green-50 border-green-200' : ''}`}
                   style={{ animationDelay: `${index * 0.05}s` }}
+                  onClick={() => handleRecordClick(record)}
                 >
                   <CardContent className="p-6">
                     <div className="flex justify-between items-start mb-4">
@@ -487,10 +716,50 @@ const Maintenance: React.FC<MaintenanceProps> = ({ onBack }) => {
                             </span>
                           )}
                           {record.receiptImage && (
-                            <Badge variant="outline" className="flex items-center gap-1">
-                              <Upload className="w-3 h-3" />
-                              יש קבלה
-                            </Badge>
+                            <div className="flex items-center gap-2">
+                              {(record.receiptImage.endsWith('.html') || record.receiptImage.endsWith('.txt') || record.receiptImage.endsWith('.json')) ? (
+                                <div className="flex items-center gap-2">
+                                  <div className="w-8 h-8 bg-gray-100 border rounded flex items-center justify-center cursor-pointer hover:bg-gray-200 transition-colors"
+                                       onClick={(e) => {
+                                         e.stopPropagation();
+                                         window.open(`/api/photos/${record.receiptImage}`, '_blank');
+                                       }}>
+                                    <FileText className="w-4 h-4 text-gray-600" />
+                                  </div>
+                                  <Badge variant="outline" className="flex items-center gap-1">
+                                    <Upload className="w-3 h-3" />
+                                    יש קבלה
+                                  </Badge>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-2">
+                                  <img 
+                                    src={`/api/photos/${record.receiptImage}`} 
+                                    alt="Receipt thumbnail" 
+                                    className="w-8 h-8 object-cover rounded border cursor-pointer hover:opacity-75 transition-opacity"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      window.open(`/api/photos/${record.receiptImage}`, '_blank');
+                                    }}
+                                    onError={(e) => {
+                                      e.target.style.display = 'none';
+                                      e.target.nextElementSibling.style.display = 'flex';
+                                    }}
+                                  />
+                                  <div className="w-8 h-8 bg-gray-100 border rounded items-center justify-center cursor-pointer hover:bg-gray-200 transition-colors hidden"
+                                       onClick={(e) => {
+                                         e.stopPropagation();
+                                         window.open(`/api/photos/${record.receiptImage}`, '_blank');
+                                       }}>
+                                    <Upload className="w-4 h-4 text-gray-600" />
+                                  </div>
+                                  <Badge variant="outline" className="flex items-center gap-1">
+                                    <Upload className="w-3 h-3" />
+                                    יש קבלה
+                                  </Badge>
+                                </div>
+                              )}
+                            </div>
                           )}
                         </div>
 
@@ -519,16 +788,39 @@ const Maintenance: React.FC<MaintenanceProps> = ({ onBack }) => {
                             {record.notes}
                           </p>
                         )}
+                        
+                        <div className="mt-4 pt-3 border-t border-gray-200">
+                          <p className="text-xs text-gray-500 text-center">
+                            לחץ על הכרטיס לצפייה בפרטים המלאים
+                          </p>
+                        </div>
                       </div>
-                      <Button 
-                        size="sm" 
-                        variant="outline" 
-                        onClick={() => handleDelete(record.id)}
-                        className="text-red-600 hover:text-red-700 hover:bg-red-50 flex items-center gap-1"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                        מחק
-                      </Button>
+                      <div className="flex flex-col gap-2">
+                        <Button 
+                          size="sm" 
+                          variant="outline" 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleRecordClick(record);
+                          }}
+                          className="text-blue-600 hover:text-blue-700 hover:bg-blue-50 flex items-center gap-1"
+                        >
+                          <FileText className="w-3 h-3" />
+                          פרטים
+                        </Button>
+                        <Button 
+                          size="sm" 
+                          variant="outline" 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDelete(record.id);
+                          }}
+                          className="text-red-600 hover:text-red-700 hover:bg-red-50 flex items-center gap-1"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                          מחק
+                        </Button>
+                      </div>
                     </div>
                   </CardContent>
                 </Card>

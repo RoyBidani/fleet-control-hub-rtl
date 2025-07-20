@@ -1,0 +1,23 @@
+{
+    "receipt_id": "R-2025-0002",
+    "date": "2025-07-20",
+    "time": "16:45",
+    "garage_name": "מוסך דוד",
+    "vehicle": {
+        "plate": "XYZ-789",
+        "model": "מזדה CX-5"
+    },
+    "services": [
+        {
+            "description": "בדיקת מזגן",
+            "price": 120
+        },
+        {
+            "description": "מילוי גז קירור", 
+            "price": 200
+        }
+    ],
+    "subtotal": 320,
+    "tax": 54,
+    "total": 374
+}

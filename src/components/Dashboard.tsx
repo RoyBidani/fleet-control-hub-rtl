@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Car, Settings, FileText, Calendar, LogOut, Users, Wrench, BarChart3, Clock, History } from 'lucide-react';
+import { apiService } from '../services/api';
 
 interface DashboardProps {
   onNavigate: (page: string) => void;
@@ -19,55 +20,15 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate, onLogout }) => {
     thisMonth: 0,
     total: 0
   });
-
-  useEffect(() => {
-    // Load real vehicle data from localStorage
-    const savedVehicles = localStorage.getItem('vehicles');
-    if (savedVehicles) {
-      const vehicles = JSON.parse(savedVehicles);
-      const total = vehicles.length;
-      const inMaintenance = vehicles.filter((v: any) => v.maintenanceStatus === 'דורש טיפול').length;
-      const available = total - inMaintenance;
-      
-      setVehicleStats({
-        totalVehicles: total,
-        availableVehicles: available,
-        inMaintenance: inMaintenance
-      });
-    }
-
-    // Load maintenance data
-    const savedMaintenanceRecords = localStorage.getItem('maintenanceRecords');
-    if (savedMaintenanceRecords) {
-      const records = JSON.parse(savedMaintenanceRecords);
-      const currentDate = new Date();
-      const thisMonthRecords = records.filter((r: any) => {
-        const recordDate = new Date(r.date);
-        return recordDate.getMonth() === currentDate.getMonth() && 
-               recordDate.getFullYear() === currentDate.getFullYear();
-      });
-      
-      setMaintenanceStats({
-        thisMonth: thisMonthRecords.length,
-        total: records.length
-      });
-    }
-  }, []);
-
-  const handleLogout = () => {
-    sessionStorage.removeItem('isLoggedIn');
-    sessionStorage.removeItem('loginTime');
-    onLogout();
-  };
-
-  const menuItems = [
+  const [loading, setLoading] = useState(true);
+  const [menuItems, setMenuItems] = useState([
     {
       id: 'vehicles',
       title: 'ניהול רכבים',
       description: 'הוספה, עריכה ומחיקה של רכבים',
       icon: Car,
       color: 'from-blue-500 to-blue-600',
-      stats: `${vehicleStats.totalVehicles} רכבים פעילים`
+      stats: `רכבים פעילים`
     },
     {
       id: 'maintenance',
@@ -75,7 +36,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate, onLogout }) => {
       description: 'ניהול פעולות תחזוקה ושירות',
       icon: Wrench,
       color: 'from-green-500 to-green-600',
-      stats: `${maintenanceStats.thisMonth} פעולות החודש`
+      stats: `פעולות החודש`
     },
     {
       id: 'reports',
@@ -91,7 +52,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate, onLogout }) => {
       description: 'תכנון תחזוקה ונסיעות',
       icon: Calendar,
       color: 'from-orange-500 to-orange-600',
-      stats: `${maintenanceStats.total} אירועים בסך הכל`
+      stats: `אירועים בסך הכל`
     },
     {
       id: 'history',
@@ -99,15 +60,106 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate, onLogout }) => {
       description: 'צפייה בטפסים ציבוריים שנשלחו',
       icon: History,
       color: 'from-teal-500 to-teal-600',
-      stats: '12 טפסים חדשים'
+      stats: 'טפסים חדשים'
     }
-  ];
+  ]);
+
+  useEffect(() => {
+    loadStats();
+  }, []);
+
+  const loadStats = async () => {
+    try {
+      setLoading(true);
+      const [vehicles, maintenanceRecords, publicReports] = await Promise.all([
+        apiService.getVehicles(),
+        apiService.getMaintenanceRecords(),
+        apiService.getPublicReports()
+      ]);
+      
+      // Calculate vehicle stats
+      const total = vehicles.length;
+      const inMaintenance = vehicles.filter(v => v.maintenanceStatus === 'דורש טיפול').length;
+      const available = total - inMaintenance;
+      
+      setVehicleStats({
+        totalVehicles: total,
+        availableVehicles: available,
+        inMaintenance: inMaintenance
+      });
+      
+      // Calculate maintenance stats
+      const currentDate = new Date();
+      const thisMonthRecords = maintenanceRecords.filter(r => {
+        const recordDate = new Date(r.date);
+        return recordDate.getMonth() === currentDate.getMonth() && 
+               recordDate.getFullYear() === currentDate.getFullYear();
+      });
+      
+      setMaintenanceStats({
+        thisMonth: thisMonthRecords.length,
+        total: maintenanceRecords.length
+      });
+
+      // Update the reports count in the menu items
+      const newReportsCount = publicReports.filter(r => r.status === 'new' || !r.status).length;
+      setMenuItems(prev => prev.map(item => {
+        switch (item.id) {
+          case 'vehicles':
+            return { ...item, stats: `${total} רכבים פעילים` };
+          case 'maintenance':
+            return { ...item, stats: `${thisMonthRecords.length} פעולות החודש` };
+          case 'calendar':
+            return { ...item, stats: `${maintenanceRecords.length} אירועים בסך הכל` };
+          case 'history':
+            return { ...item, stats: `${newReportsCount} טפסים חדשים` };
+          default:
+            return item;
+        }
+      }));
+    } catch (error) {
+      console.error('Error loading stats:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLogout = () => {
+    sessionStorage.removeItem('isLoggedIn');
+    sessionStorage.removeItem('loginTime');
+    onLogout();
+  };
+
 
   const quickStats = [
-    { label: 'סה"כ רכבים', value: vehicleStats.totalVehicles.toString(), icon: Car, color: 'text-blue-600' },
-    { label: 'רכבים זמינים', value: vehicleStats.availableVehicles.toString(), icon: Users, color: 'text-green-600' },
-    { label: 'בתחזוקה', value: vehicleStats.inMaintenance.toString(), icon: Settings, color: 'text-orange-600' },
-    { label: 'תחזוקות החודש', value: maintenanceStats.thisMonth.toString(), icon: Clock, color: 'text-purple-600' }
+    { 
+      label: 'סה"כ רכבים', 
+      value: vehicleStats.totalVehicles.toString(), 
+      icon: Car, 
+      color: 'text-blue-600',
+      action: () => onNavigate('vehicles')
+    },
+    { 
+      label: 'רכבים זמינים', 
+      value: vehicleStats.availableVehicles.toString(), 
+      icon: Users, 
+      color: 'text-green-600',
+      action: () => onNavigate('vehicles')
+    },
+    { 
+      label: 'בתחזוקה', 
+      value: vehicleStats.inMaintenance.toString(), 
+      icon: Settings, 
+      color: 'text-orange-600',
+      action: () => onNavigate('maintenance')
+    },
+    { 
+      label: 'תחזוקות החודש', 
+      value: maintenanceStats.thisMonth.toString(), 
+      icon: Clock, 
+      color: 'text-purple-600',
+      action: () => onNavigate('maintenance')
+    }
   ];
 
   return (
@@ -144,12 +196,18 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate, onLogout }) => {
         {/* Quick Stats */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           {quickStats.map((stat, index) => (
-            <Card key={stat.label} className={`fleet-card scale-in hover:shadow-lg transition-all duration-300`} style={{ animationDelay: `${index * 0.1}s` }}>
+            <Card 
+              key={stat.label} 
+              className={`fleet-card scale-in hover:shadow-lg transition-all duration-300 cursor-pointer hover:scale-105`} 
+              style={{ animationDelay: `${index * 0.1}s` }}
+              onClick={stat.action}
+            >
               <CardContent className="p-6">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-medium text-gray-600">{stat.label}</p>
                     <p className="text-2xl font-bold text-gray-900">{stat.value}</p>
+                    <p className="text-xs text-blue-600 mt-1">לחץ לפרטים</p>
                   </div>
                   <stat.icon className={`w-8 h-8 ${stat.color}`} />
                 </div>

@@ -3,7 +3,14 @@ import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { ArrowLeft, ChevronLeft, ChevronRight, Plus, Calendar as CalendarIcon, Wrench, Car } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Checkbox } from '@/components/ui/checkbox';
+import { ArrowLeft, ChevronLeft, ChevronRight, Plus, Calendar as CalendarIcon, Wrench, Car, Bell, Repeat } from 'lucide-react';
+import { apiService } from '../services/api';
 
 interface CalendarProps {
   onBack: () => void;
@@ -32,13 +39,65 @@ interface MaintenanceRecord {
 const Calendar: React.FC<CalendarProps> = ({ onBack }) => {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [events, setEvents] = useState<Event[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showAddEventDialog, setShowAddEventDialog] = useState(false);
+  const [vehicles, setVehicles] = useState<any[]>([]);
+  const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
+  const [showEventDetails, setShowEventDetails] = useState(false);
+  const [showEditEventDialog, setShowEditEventDialog] = useState(false);
+  const [editEvent, setEditEvent] = useState({
+    id: '',
+    title: '',
+    date: '',
+    time: '',
+    type: 'maintenance' as 'maintenance' | 'inspection' | 'service',
+    vehicleId: '',
+    description: '',
+    alertEnabled: false,
+    alertTime: '15',
+    isRecurring: false,
+    recurrenceType: 'weekly' as 'daily' | 'weekly' | 'monthly' | 'yearly',
+    recurrenceInterval: 1,
+    recurrenceEndDate: ''
+  });
+  const [newEvent, setNewEvent] = useState({
+    title: '',
+    date: '',
+    time: '',
+    type: 'maintenance' as 'maintenance' | 'inspection' | 'service',
+    vehicleId: '',
+    description: '',
+    alertEnabled: false,
+    alertTime: '15',
+    isRecurring: false,
+    recurrenceType: 'weekly' as 'daily' | 'weekly' | 'monthly' | 'yearly',
+    recurrenceInterval: 1,
+    recurrenceEndDate: ''
+  });
 
   useEffect(() => {
-    // Load maintenance records from localStorage and convert to calendar events
-    const savedRecords = localStorage.getItem('maintenanceRecords');
-    if (savedRecords) {
-      const maintenanceRecords: MaintenanceRecord[] = JSON.parse(savedRecords);
-      const calendarEvents: Event[] = maintenanceRecords.map(record => ({
+    loadCalendarEvents();
+    loadVehicles();
+  }, []);
+
+  const loadVehicles = async () => {
+    try {
+      const vehiclesList = await apiService.getVehicles();
+      setVehicles(vehiclesList);
+    } catch (error) {
+      console.error('Error loading vehicles:', error);
+    }
+  };
+
+  const loadCalendarEvents = async () => {
+    try {
+      setLoading(true);
+      const [maintenanceRecords, calendarEvents] = await Promise.all([
+        apiService.getMaintenanceRecords(),
+        apiService.getCalendarEvents()
+      ]);
+      
+      const maintenanceEvents: Event[] = maintenanceRecords.map(record => ({
         id: record.id,
         title: record.serviceType,
         date: new Date(record.date),
@@ -46,9 +105,26 @@ const Calendar: React.FC<CalendarProps> = ({ onBack }) => {
         vehicleNumber: record.vehiclePlateNumber,
         description: record.notes
       }));
-      setEvents(calendarEvents);
+
+      const calendarEventsConverted: Event[] = calendarEvents.map(event => {
+        const vehicle = vehicles.find(v => v.id === event.vehicleId);
+        return {
+          id: event.id,
+          title: event.title,
+          date: new Date(event.date),
+          type: event.type as 'maintenance' | 'inspection' | 'service',
+          vehicleNumber: vehicle ? vehicle.plateNumber : 'N/A',
+          description: event.description
+        };
+      });
+
+      setEvents([...maintenanceEvents, ...calendarEventsConverted]);
+    } catch (error) {
+      console.error('Error loading calendar events:', error);
+    } finally {
+      setLoading(false);
     }
-  }, []);
+  };
 
   const getDaysInMonth = (date: Date) => {
     return new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
@@ -76,6 +152,148 @@ const Calendar: React.FC<CalendarProps> = ({ onBack }) => {
       }
       return newDate;
     });
+  };
+
+  const handleEventClick = (event: Event) => {
+    setSelectedEvent(event);
+    setShowEventDetails(true);
+  };
+
+  const handleEditEvent = (event: Event) => {
+    const eventDate = new Date(event.date);
+    setEditEvent({
+      id: event.id,
+      title: event.title,
+      date: eventDate.toISOString().split('T')[0],
+      time: eventDate.toTimeString().slice(0, 5),
+      type: event.type,
+      vehicleId: vehicles.find(v => v.plateNumber === event.vehicleNumber)?.id || '',
+      description: event.description || '',
+      alertEnabled: false,
+      alertTime: '15',
+      isRecurring: false,
+      recurrenceType: 'weekly',
+      recurrenceInterval: 1,
+      recurrenceEndDate: ''
+    });
+    setShowEventDetails(false);
+    setShowEditEventDialog(true);
+  };
+
+  const handleUpdateEvent = async () => {
+    try {
+      // Validate required fields
+      if (!editEvent.title.trim()) {
+        alert('אנא הזן כותרת לאירוע');
+        return;
+      }
+      
+      if (!editEvent.date) {
+        alert('אנא בחר תאריך לאירוע');
+        return;
+      }
+      
+      if (!editEvent.vehicleId) {
+        alert('אנא בחר רכב');
+        return;
+      }
+      
+      const eventData = {
+        title: editEvent.title,
+        date: editEvent.time ? `${editEvent.date}T${editEvent.time}:00.000Z` : `${editEvent.date}T09:00:00.000Z`,
+        type: editEvent.type,
+        vehicleId: editEvent.vehicleId,
+        description: editEvent.description,
+        alertEnabled: editEvent.alertEnabled,
+        alertTime: editEvent.alertTime,
+        isRecurring: editEvent.isRecurring,
+        recurrenceType: editEvent.recurrenceType,
+        recurrenceInterval: editEvent.recurrenceInterval,
+        recurrenceEndDate: editEvent.recurrenceEndDate
+      };
+      
+      console.log('Updating calendar event:', eventData);
+      await apiService.updateCalendarEvent(editEvent.id, eventData);
+      await loadCalendarEvents();
+      setShowEditEventDialog(false);
+      
+      alert('האירוע עודכן בהצלחה!');
+    } catch (error) {
+      console.error('Error updating calendar event:', error);
+      alert('שגיאה בעדכון האירוע: ' + error.message);
+    }
+  };
+
+  const handleDeleteEvent = async (eventId: string) => {
+    if (confirm('האם אתם בטוחים שברצונכם למחוק את האירוע?')) {
+      try {
+        await apiService.deleteCalendarEvent(eventId);
+        await loadCalendarEvents();
+        setShowEventDetails(false);
+        alert('האירוע נמחק בהצלחה!');
+      } catch (error) {
+        console.error('Error deleting calendar event:', error);
+        alert('שגיאה במחיקת האירוע: ' + error.message);
+      }
+    }
+  };
+
+  const handleAddEvent = async () => {
+    try {
+      // Validate required fields
+      if (!newEvent.title.trim()) {
+        alert('אנא הזן כותרת לאירוע');
+        return;
+      }
+      
+      if (!newEvent.date) {
+        alert('אנא בחר תאריך לאירוע');
+        return;
+      }
+      
+      if (!newEvent.vehicleId) {
+        alert('אנא בחר רכב');
+        return;
+      }
+      
+      const eventData = {
+        title: newEvent.title,
+        date: newEvent.time ? `${newEvent.date}T${newEvent.time}:00.000Z` : `${newEvent.date}T09:00:00.000Z`,
+        type: newEvent.type,
+        vehicleId: newEvent.vehicleId,
+        description: newEvent.description,
+        alertEnabled: newEvent.alertEnabled,
+        alertTime: newEvent.alertTime,
+        isRecurring: newEvent.isRecurring,
+        recurrenceType: newEvent.recurrenceType,
+        recurrenceInterval: newEvent.recurrenceInterval,
+        recurrenceEndDate: newEvent.recurrenceEndDate
+      };
+      
+      console.log('Creating calendar event:', eventData);
+      await apiService.createCalendarEvent(eventData);
+      await loadCalendarEvents();
+      setShowAddEventDialog(false);
+      setNewEvent({
+        title: '',
+        date: '',
+        time: '',
+        type: 'maintenance',
+        vehicleId: '',
+        description: '',
+        alertEnabled: false,
+        alertTime: '15',
+        isRecurring: false,
+        recurrenceType: 'weekly',
+        recurrenceInterval: 1,
+        recurrenceEndDate: ''
+      });
+      
+      alert('האירוע נוסף בהצלחה!');
+    } catch (error) {
+      console.error('Error creating calendar event:', error);
+      alert('שגיאה ביצירת האירוע: ' + error.message);
+    }
   };
 
   const monthNames = [
@@ -130,16 +348,36 @@ const Calendar: React.FC<CalendarProps> = ({ onBack }) => {
               return (
                 <div
                   key={event.id}
-                  className={`text-xs p-1 rounded flex items-center gap-1 ${getTypeColor(event.type)}`}
-                  title={event.description}
+                  className={`text-xs p-2 rounded flex flex-col gap-1 cursor-pointer hover:shadow-md hover:scale-105 transition-all ${getTypeColor(event.type)}`}
+                  title={`${event.title} - ${event.description || 'אין תיאור'}`}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    handleEventClick(event);
+                  }}
                 >
-                  <IconComponent className="w-3 h-3" />
-                  <span className="truncate">{event.title}</span>
+                  <div className="flex items-center gap-1">
+                    <IconComponent className="w-3 h-3" />
+                    <span className="truncate text-xs">{event.title}</span>
+                  </div>
+                  <span className="text-xs text-gray-600">{event.vehicleNumber}</span>
                 </div>
               );
             })}
             {dayEvents.length > 2 && (
-              <div className="text-xs text-gray-500">+{dayEvents.length - 2} נוספים</div>
+              <div 
+                className="text-xs text-gray-500 cursor-pointer hover:text-blue-600 p-1 rounded hover:bg-blue-50"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  // Show all events for this day
+                  if (dayEvents.length > 0) {
+                    handleEventClick(dayEvents[0]); // Show first event as example
+                  }
+                }}
+              >
+                +{dayEvents.length - 2} נוספים
+              </div>
             )}
           </div>
         </div>
@@ -169,10 +407,336 @@ const Calendar: React.FC<CalendarProps> = ({ onBack }) => {
               </div>
               <h1 className="text-xl font-bold text-gray-900">לוח שנה</h1>
             </div>
-            <Button className="flex items-center gap-2 bg-orange-600 hover:bg-orange-700">
-              <Plus className="w-4 h-4" />
-              הוסף אירוע
-            </Button>
+            <Dialog open={showAddEventDialog} onOpenChange={setShowAddEventDialog}>
+              <DialogTrigger asChild>
+                <Button className="flex items-center gap-2 bg-orange-600 hover:bg-orange-700">
+                  <Plus className="w-4 h-4" />
+                  הוסף אירוע
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>הוספת אירוע חדש</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4">
+                  <div>
+                    <Label htmlFor="title">כותרת</Label>
+                    <Input
+                      id="title"
+                      value={newEvent.title}
+                      onChange={(e) => setNewEvent({...newEvent, title: e.target.value})}
+                      placeholder="כותרת האירוע"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label htmlFor="date">תאריך</Label>
+                      <Input
+                        id="date"
+                        type="date"
+                        value={newEvent.date}
+                        onChange={(e) => setNewEvent({...newEvent, date: e.target.value})}
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="time">שעה</Label>
+                      <Input
+                        id="time"
+                        type="time"
+                        value={newEvent.time}
+                        onChange={(e) => setNewEvent({...newEvent, time: e.target.value})}
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <Label htmlFor="type">סוג</Label>
+                    <Select value={newEvent.type} onValueChange={(value) => setNewEvent({...newEvent, type: value as any})}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="בחר סוג אירוע" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="maintenance">תחזוקה</SelectItem>
+                        <SelectItem value="inspection">בדיקה</SelectItem>
+                        <SelectItem value="service">שירות</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label htmlFor="vehicle">רכב</Label>
+                    <Select value={newEvent.vehicleId} onValueChange={(value) => setNewEvent({...newEvent, vehicleId: value})}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="בחר רכב" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {vehicles.map((vehicle) => (
+                          <SelectItem key={vehicle.id} value={vehicle.id}>
+                            {vehicle.plateNumber} - {vehicle.model}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label htmlFor="description">תיאור</Label>
+                    <Textarea
+                      id="description"
+                      value={newEvent.description}
+                      onChange={(e) => setNewEvent({...newEvent, description: e.target.value})}
+                      placeholder="תיאור האירוע"
+                    />
+                  </div>
+
+                  {/* Alert Settings */}
+                  <div className="space-y-3 p-4 bg-yellow-50 rounded-lg">
+                    <div className="flex items-center space-x-2">
+                      <Checkbox 
+                        id="alertEnabled"
+                        checked={newEvent.alertEnabled}
+                        onCheckedChange={(checked) => setNewEvent({...newEvent, alertEnabled: checked as boolean})}
+                      />
+                      <Label htmlFor="alertEnabled" className="flex items-center gap-2">
+                        <Bell className="w-4 h-4" />
+                        הפעל התרעה
+                      </Label>
+                    </div>
+                    
+                    {newEvent.alertEnabled && (
+                      <div>
+                        <Label htmlFor="alertTime">זמן התרעה (דקות לפני)</Label>
+                        <Select value={newEvent.alertTime} onValueChange={(value) => setNewEvent({...newEvent, alertTime: value})}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="בחר זמן התרעה" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="5">5 דקות</SelectItem>
+                            <SelectItem value="15">15 דקות</SelectItem>
+                            <SelectItem value="30">30 דקות</SelectItem>
+                            <SelectItem value="60">שעה</SelectItem>
+                            <SelectItem value="1440">יום</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Recurring Settings */}
+                  <div className="space-y-3 p-4 bg-blue-50 rounded-lg">
+                    <div className="flex items-center space-x-2">
+                      <Checkbox 
+                        id="isRecurring"
+                        checked={newEvent.isRecurring}
+                        onCheckedChange={(checked) => setNewEvent({...newEvent, isRecurring: checked as boolean})}
+                      />
+                      <Label htmlFor="isRecurring" className="flex items-center gap-2">
+                        <Repeat className="w-4 h-4" />
+                        אירוע חוזר
+                      </Label>
+                    </div>
+                    
+                    {newEvent.isRecurring && (
+                      <div className="space-y-3">
+                        <div>
+                          <Label htmlFor="recurrenceType">סוג חזרה</Label>
+                          <Select value={newEvent.recurrenceType} onValueChange={(value) => setNewEvent({...newEvent, recurrenceType: value as any})}>
+                            <SelectTrigger>
+                              <SelectValue placeholder="בחר סוג חזרה" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="daily">יומי</SelectItem>
+                              <SelectItem value="weekly">שבועי</SelectItem>
+                              <SelectItem value="monthly">חודשי</SelectItem>
+                              <SelectItem value="yearly">שנתי</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        
+                        <div>
+                          <Label htmlFor="recurrenceInterval">מרווח חזרה</Label>
+                          <Input
+                            id="recurrenceInterval"
+                            type="number"
+                            min="1"
+                            value={newEvent.recurrenceInterval}
+                            onChange={(e) => setNewEvent({...newEvent, recurrenceInterval: parseInt(e.target.value) || 1})}
+                            placeholder="כל כמה..."
+                          />
+                        </div>
+                        
+                        <div>
+                          <Label htmlFor="recurrenceEndDate">תאריך סיום (אופציונלי)</Label>
+                          <Input
+                            id="recurrenceEndDate"
+                            type="date"
+                            value={newEvent.recurrenceEndDate}
+                            onChange={(e) => setNewEvent({...newEvent, recurrenceEndDate: e.target.value})}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    <Button onClick={handleAddEvent} className="flex-1">
+                      הוסף אירוע
+                    </Button>
+                    <Button variant="outline" onClick={() => setShowAddEventDialog(false)}>
+                      ביטול
+                    </Button>
+                  </div>
+                </div>
+              </DialogContent>
+            </Dialog>
+            
+            {/* Edit Event Dialog */}
+            <Dialog open={showEditEventDialog} onOpenChange={setShowEditEventDialog}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>עריכת אירוע</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4">
+                  <div>
+                    <Label htmlFor="edit-title">כותרת</Label>
+                    <Input
+                      id="edit-title"
+                      value={editEvent.title}
+                      onChange={(e) => setEditEvent({...editEvent, title: e.target.value})}
+                      placeholder="כותרת האירוע"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label htmlFor="edit-date">תאריך</Label>
+                      <Input
+                        id="edit-date"
+                        type="date"
+                        value={editEvent.date}
+                        onChange={(e) => setEditEvent({...editEvent, date: e.target.value})}
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="edit-time">שעה</Label>
+                      <Input
+                        id="edit-time"
+                        type="time"
+                        value={editEvent.time}
+                        onChange={(e) => setEditEvent({...editEvent, time: e.target.value})}
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <Label htmlFor="edit-type">סוג</Label>
+                    <Select value={editEvent.type} onValueChange={(value) => setEditEvent({...editEvent, type: value as any})}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="בחר סוג אירוע" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="maintenance">תחזוקה</SelectItem>
+                        <SelectItem value="inspection">בדיקה</SelectItem>
+                        <SelectItem value="service">שירות</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label htmlFor="edit-vehicle">רכב</Label>
+                    <Select value={editEvent.vehicleId} onValueChange={(value) => setEditEvent({...editEvent, vehicleId: value})}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="בחר רכב" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {vehicles.map((vehicle) => (
+                          <SelectItem key={vehicle.id} value={vehicle.id}>
+                            {vehicle.plateNumber} - {vehicle.model}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label htmlFor="edit-description">תיאור</Label>
+                    <Textarea
+                      id="edit-description"
+                      value={editEvent.description}
+                      onChange={(e) => setEditEvent({...editEvent, description: e.target.value})}
+                      placeholder="תיאור האירוע"
+                    />
+                  </div>
+                  <div className="flex gap-2">
+                    <Button onClick={handleUpdateEvent} className="flex-1">
+                      עדכן אירוע
+                    </Button>
+                    <Button variant="outline" onClick={() => setShowEditEventDialog(false)}>
+                      ביטול
+                    </Button>
+                  </div>
+                </div>
+              </DialogContent>
+            </Dialog>
+
+            {/* Event Details Dialog */}
+            <Dialog open={showEventDetails} onOpenChange={setShowEventDetails}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>פרטי האירוע</DialogTitle>
+                </DialogHeader>
+                {selectedEvent && (
+                  <div className="space-y-4">
+                    <div>
+                      <h3 className="font-semibold text-lg">{selectedEvent.title}</h3>
+                      <p className="text-sm text-gray-600">{selectedEvent.description}</p>
+                    </div>
+                    
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <span className="text-sm font-medium text-gray-700">תאריך:</span>
+                        <p className="text-sm">{selectedEvent.date.toLocaleDateString('he-IL')}</p>
+                      </div>
+                      <div>
+                        <span className="text-sm font-medium text-gray-700">שעה:</span>
+                        <p className="text-sm">{selectedEvent.date.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}</p>
+                      </div>
+                    </div>
+                    
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <span className="text-sm font-medium text-gray-700">סוג:</span>
+                        <Badge className={`ml-2 ${getTypeColor(selectedEvent.type)}`}>
+                          {selectedEvent.type === 'maintenance' ? 'תחזוקה' : 
+                           selectedEvent.type === 'inspection' ? 'בדיקה' : 'שירות'}
+                        </Badge>
+                      </div>
+                      <div>
+                        <span className="text-sm font-medium text-gray-700">רכב:</span>
+                        <p className="text-sm">{selectedEvent.vehicleNumber}</p>
+                      </div>
+                    </div>
+                    
+                    <div className="flex justify-between gap-2 pt-4">
+                      <div className="flex gap-2">
+                        <Button 
+                          onClick={() => handleEditEvent(selectedEvent)}
+                          variant="outline"
+                          className="flex items-center gap-2"
+                        >
+                          ערוך
+                        </Button>
+                        <Button 
+                          onClick={() => handleDeleteEvent(selectedEvent.id)}
+                          variant="outline"
+                          className="flex items-center gap-2 text-red-600 hover:text-red-700 hover:bg-red-50"
+                        >
+                          מחק
+                        </Button>
+                      </div>
+                      <Button 
+                        variant="outline" 
+                        onClick={() => setShowEventDetails(false)}
+                      >
+                        סגור
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </DialogContent>
+            </Dialog>
           </div>
         </div>
       </header>
@@ -241,7 +805,11 @@ const Calendar: React.FC<CalendarProps> = ({ onBack }) => {
                   .map(event => {
                     const IconComponent = getTypeIcon(event.type);
                     return (
-                      <div key={event.id} className="flex items-center gap-4 p-4 border rounded-lg">
+                      <div 
+                        key={event.id} 
+                        className="flex items-center gap-4 p-4 border rounded-lg cursor-pointer hover:bg-gray-50 transition-colors"
+                        onClick={() => handleEventClick(event)}
+                      >
                         <div className={`w-10 h-10 rounded-full flex items-center justify-center ${getTypeColor(event.type)}`}>
                           <IconComponent className="w-5 h-5" />
                         </div>

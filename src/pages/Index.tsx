@@ -3,17 +3,19 @@ import React, { useState, useEffect } from 'react';
 import Login from '@/components/Login';
 import Dashboard from '@/components/Dashboard';
 import VehicleManagement from '@/components/VehicleManagement';
+import VehicleDetailsSidebar from '@/components/VehicleDetailsSidebar';
 import Maintenance from '@/components/Maintenance';
 import PublicForm from '@/components/PublicForm';
 import Calendar from '@/components/Calendar';
 import Reports from '@/components/Reports';
 import History from '@/components/History';
 
-type Page = 'login' | 'dashboard' | 'vehicles' | 'maintenance' | 'reports' | 'calendar' | 'history' | 'public-form';
+type Page = 'login' | 'dashboard' | 'vehicles' | 'vehicle-details' | 'maintenance' | 'reports' | 'calendar' | 'history' | 'public-form';
 
 const Index = () => {
   const [currentPage, setCurrentPage] = useState<Page>('login');
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null);
 
   useEffect(() => {
     // Check if user is logged in
@@ -45,13 +47,23 @@ const Index = () => {
   };
 
   const handleBack = () => {
+    console.log('handleBack called, currentPage:', currentPage, 'isLoggedIn:', isLoggedIn);
+    
     if (currentPage === 'public-form') {
       setCurrentPage(isLoggedIn ? 'dashboard' : 'login');
+    } else if (currentPage === 'vehicle-details') {
+      setCurrentPage('vehicles');
+      setSelectedVehicleId(null);
     } else if (isLoggedIn) {
       setCurrentPage('dashboard');
     } else {
       setCurrentPage('login');
     }
+  };
+
+  const handleNavigateToVehicleDetails = (vehicleId: string) => {
+    setSelectedVehicleId(vehicleId);
+    setCurrentPage('vehicle-details');
   };
 
   // Render different pages based on current state
@@ -63,9 +75,21 @@ const Index = () => {
       return <Dashboard onNavigate={handleNavigate} onLogout={handleLogout} />;
     
     case 'vehicles':
-      return <VehicleManagement onBack={handleBack} />;
+      return <VehicleManagement onBack={handleBack} onNavigateToVehicleDetails={handleNavigateToVehicleDetails} />;
+    
+    case 'vehicle-details':
+      return selectedVehicleId ? (
+        <VehicleDetailsSidebar 
+          vehicleId={selectedVehicleId} 
+          onBack={handleBack} 
+          onVehicleChange={handleNavigateToVehicleDetails}
+        />
+      ) : (
+        <VehicleManagement onBack={handleBack} onNavigateToVehicleDetails={handleNavigateToVehicleDetails} />
+      );
     
     case 'maintenance':
+      console.log('Rendering maintenance page');
       return <Maintenance onBack={handleBack} />;
     
     case 'reports':

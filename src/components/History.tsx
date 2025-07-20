@@ -4,6 +4,8 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { ArrowLeft, Search, Calendar, User, Car, Camera, MapPin, FileText, Eye, Image } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { apiService } from '../services/api';
 
 interface HistoryProps {
   onBack: () => void;
@@ -27,42 +29,34 @@ const History: React.FC<HistoryProps> = ({ onBack }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
   const [entries, setEntries] = useState<PublicFormEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedEntry, setSelectedEntry] = useState<PublicFormEntry | null>(null);
+  const [showEntryDetails, setShowEntryDetails] = useState(false);
 
   useEffect(() => {
-    // Load entries from localStorage
-    const savedReports = localStorage.getItem('publicReports');
-    if (savedReports) {
-      try {
-        const parsed = JSON.parse(savedReports);
-        const entriesWithDates = parsed.map((entry: any) => ({
-          ...entry,
-          timestamp: new Date(entry.submittedAt || entry.timestamp),
-          project: entry.feature || 'לא צוין',
-          trip: entry.feature || 'לא צוין',
-          images: entry.images || (entry.image ? [entry.image] : [])
-        }));
-        setEntries(entriesWithDates);
-      } catch (error) {
-        console.error('Error parsing saved entries:', error);
-      }
-    }
-
-    // Also load from old format if exists
-    const savedEntries = localStorage.getItem('publicFormEntries');
-    if (savedEntries && !savedReports) {
-      try {
-        const parsed = JSON.parse(savedEntries);
-        const entriesWithDates = parsed.map((entry: any) => ({
-          ...entry,
-          timestamp: new Date(entry.timestamp),
-          images: entry.images || []
-        }));
-        setEntries(entriesWithDates);
-      } catch (error) {
-        console.error('Error parsing saved entries:', error);
-      }
-    }
+    loadHistoryEntries();
   }, []);
+
+  const loadHistoryEntries = async () => {
+    try {
+      setLoading(true);
+      const reports = await apiService.getPublicReports();
+      const entriesWithDates = reports.map((entry: any) => ({
+        ...entry,
+        timestamp: new Date(entry.submittedAt || entry.timestamp),
+        project: entry.feature || 'לא צוין',
+        trip: entry.feature || 'לא צוין',
+        images: entry.images || [],
+        distance: entry.mileage || '0',
+        driverName: entry.driverName || 'לא צוין'
+      }));
+      setEntries(entriesWithDates);
+    } catch (error) {
+      console.error('Error loading history entries:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -82,19 +76,25 @@ const History: React.FC<HistoryProps> = ({ onBack }) => {
     }
   };
 
-  const updateEntryStatus = (id: string, newStatus: 'new' | 'reviewed' | 'processed') => {
-    const updatedEntries = entries.map(entry => 
-      entry.id === id ? { ...entry, status: newStatus } : entry
-    );
-    setEntries(updatedEntries);
-    localStorage.setItem('publicReports', JSON.stringify(updatedEntries));
+  const updateEntryStatus = async (id: string, newStatus: 'new' | 'reviewed' | 'processed') => {
+    try {
+      await apiService.updatePublicReport(id, { status: newStatus });
+      await loadHistoryEntries();
+    } catch (error) {
+      console.error('Error updating entry status:', error);
+    }
+  };
+
+  const handleEntryClick = (entry: PublicFormEntry) => {
+    setSelectedEntry(entry);
+    setShowEntryDetails(true);
   };
 
   const filteredEntries = entries.filter(entry => {
     const matchesSearch = 
-      entry.driverName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      entry.barcode.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      entry.project.toLowerCase().includes(searchTerm.toLowerCase());
+      (entry.driverName && entry.driverName.toLowerCase().includes(searchTerm.toLowerCase())) ||
+      (entry.barcode && entry.barcode.toLowerCase().includes(searchTerm.toLowerCase())) ||
+      (entry.project && entry.project.toLowerCase().includes(searchTerm.toLowerCase()));
     
     const matchesStatus = selectedStatus === 'all' || entry.status === selectedStatus;
     
@@ -136,6 +136,95 @@ const History: React.FC<HistoryProps> = ({ onBack }) => {
           </div>
         </div>
       </header>
+
+      {/* Entry Details Dialog */}
+      <Dialog open={showEntryDetails} onOpenChange={setShowEntryDetails}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>פרטי הדיווח</DialogTitle>
+          </DialogHeader>
+          {selectedEntry && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <span className="text-sm font-medium text-gray-700">שם נהג:</span>
+                  <p className="text-sm">{selectedEntry.driverName}</p>
+                </div>
+                <div>
+                  <span className="text-sm font-medium text-gray-700">ברקוד:</span>
+                  <p className="text-sm">{selectedEntry.barcode}</p>
+                </div>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <span className="text-sm font-medium text-gray-700">תאריך:</span>
+                  <p className="text-sm">{selectedEntry.timestamp.toLocaleString('he-IL', {
+                    year: 'numeric',
+                    month: 'long',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                  })}</p>
+                </div>
+                <div>
+                  <span className="text-sm font-medium text-gray-700">מד מרחק:</span>
+                  <p className="text-sm">{selectedEntry.distance} ק"מ</p>
+                </div>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <span className="text-sm font-medium text-gray-700">תכונה:</span>
+                  <p className="text-sm">{selectedEntry.project}</p>
+                </div>
+                <div>
+                  <span className="text-sm font-medium text-gray-700">סטטוס:</span>
+                  <Badge className={`ml-2 ${getStatusColor(selectedEntry.status)}`}>
+                    {getStatusText(selectedEntry.status)}
+                  </Badge>
+                </div>
+              </div>
+              
+              {selectedEntry.notes && (
+                <div>
+                  <span className="text-sm font-medium text-gray-700">הערות:</span>
+                  <p className="text-sm mt-1 p-3 bg-gray-50 rounded">{selectedEntry.notes}</p>
+                </div>
+              )}
+              
+              {selectedEntry.images && selectedEntry.images.length > 0 && (
+                <div>
+                  <span className="text-sm font-medium text-gray-700">תמונות ({selectedEntry.images.length}):</span>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mt-2">
+                    {selectedEntry.images.map((imageName, index) => (
+                      <div key={index} className="relative bg-gray-100 rounded-lg p-2 flex flex-col items-center justify-center min-h-20">
+                        <Image className="w-6 h-6 text-gray-400 mb-1" />
+                        <span className="text-xs text-gray-600 text-center break-all">{imageName}</span>
+                        <div className="text-xs text-blue-600 mt-1">
+                          תמונה זמינה
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-xs text-gray-500 mt-2">
+                    * התמונות נשמרות במערכת אך טעינתן תתאפשר לאחר הגדרת אחסון מלא
+                  </p>
+                </div>
+              )}
+              
+              <div className="flex justify-end gap-2 pt-4">
+                <Button 
+                  variant="outline" 
+                  onClick={() => setShowEntryDetails(false)}
+                >
+                  סגור
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Filters */}
@@ -201,7 +290,11 @@ const History: React.FC<HistoryProps> = ({ onBack }) => {
             </Card>
           ) : (
             filteredEntries.map(entry => (
-              <Card key={entry.id} className="hover:shadow-lg transition-shadow">
+              <Card 
+                key={entry.id} 
+                className="hover:shadow-lg transition-shadow cursor-pointer"
+                onClick={() => handleEntryClick(entry)}
+              >
                 <CardContent className="p-6">
                   <div className="flex items-start justify-between mb-4">
                     <div className="flex items-center gap-3">
@@ -212,7 +305,13 @@ const History: React.FC<HistoryProps> = ({ onBack }) => {
                         <h3 className="font-medium text-gray-900">{entry.driverName}</h3>
                         <div className="flex items-center gap-2 text-sm text-gray-500">
                           <Calendar className="w-4 h-4" />
-                          {entry.timestamp.toLocaleString('he-IL')}
+                          {entry.timestamp.toLocaleString('he-IL', {
+                            year: 'numeric',
+                            month: 'long',
+                            day: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit'
+                          })}
                         </div>
                       </div>
                     </div>
@@ -269,20 +368,55 @@ const History: React.FC<HistoryProps> = ({ onBack }) => {
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() => updateEntryStatus(entry.id, 'reviewed')}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            updateEntryStatus(entry.id, 'reviewed');
+                          }}
+                          className="flex items-center gap-2"
                         >
-                          <Eye className="w-4 h-4 mr-2" />
+                          <Eye className="w-4 h-4" />
                           סמן כנבדק
                         </Button>
                       )}
                       {entry.status === 'reviewed' && (
                         <Button
                           size="sm"
-                          onClick={() => updateEntryStatus(entry.id, 'processed')}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            updateEntryStatus(entry.id, 'processed');
+                          }}
+                          className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white"
                         >
+                          <Eye className="w-4 h-4" />
                           סמן כטופל
                         </Button>
                       )}
+                      {entry.status === 'processed' && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            updateEntryStatus(entry.id, 'reviewed');
+                          }}
+                          className="flex items-center gap-2"
+                        >
+                          <Eye className="w-4 h-4" />
+                          סמן כנבדק
+                        </Button>
+                      )}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleEntryClick(entry);
+                        }}
+                        className="flex items-center gap-2 text-blue-600 hover:text-blue-700"
+                      >
+                        <FileText className="w-4 h-4" />
+                        פרטים
+                      </Button>
                     </div>
                     {entry.images && entry.images.length > 0 && (
                       <Badge variant="outline" className="flex items-center gap-1">
@@ -290,6 +424,12 @@ const History: React.FC<HistoryProps> = ({ onBack }) => {
                         {entry.images.length} תמונות
                       </Badge>
                     )}
+                  </div>
+                  
+                  <div className="mt-4 pt-3 border-t border-gray-200">
+                    <p className="text-xs text-gray-500 text-center">
+                      לחץ על הכרטיס לצפייה בפרטים המלאים
+                    </p>
                   </div>
                 </CardContent>
               </Card>

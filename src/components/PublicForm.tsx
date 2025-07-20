@@ -6,7 +6,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { FileText, Camera, QrCode, ArrowRight, CheckCircle, Gauge, X } from 'lucide-react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { FileText, Camera, QrCode, ArrowRight, CheckCircle, Gauge, X, Scan, Car } from 'lucide-react';
+import { apiService } from '../services/api';
 
 interface PublicFormProps {
   onBack: () => void;
@@ -24,54 +27,131 @@ const PublicForm: React.FC<PublicFormProps> = ({ onBack }) => {
     notes: ''
   });
 
+  const [imagePreviews, setImagePreviews] = useState<string[]>([]);
+
   const [alert, setAlert] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showQrScanner, setShowQrScanner] = useState(false);
+  const [vehicles, setVehicles] = useState<any[]>([]);
+  const [showVehicleSelection, setShowVehicleSelection] = useState(false);
+
+  React.useEffect(() => {
+    loadVehicles();
+  }, []);
+
+  const loadVehicles = async () => {
+    try {
+      const vehiclesList = await apiService.getVehicles();
+      setVehicles(vehiclesList);
+    } catch (error) {
+      console.error('Error loading vehicles:', error);
+    }
+  };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
-    setFormData({...formData, images: [...formData.images, ...files]});
+    const newImages = [...formData.images, ...files];
+    setFormData({...formData, images: newImages});
+    
+    // Create previews for new images
+    const newPreviews = [...imagePreviews];
+    files.forEach(file => {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        newPreviews.push(event.target?.result as string);
+        setImagePreviews([...newPreviews]);
+      };
+      reader.readAsDataURL(file);
+    });
   };
 
   const removeImage = (index: number) => {
     const newImages = formData.images.filter((_, i) => i !== index);
+    const newPreviews = imagePreviews.filter((_, i) => i !== index);
     setFormData({...formData, images: newImages});
+    setImagePreviews(newPreviews);
+  };
+
+  const startQrScanning = async () => {
+    try {
+      setShowQrScanner(true);
+      
+      // Request camera permission
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { 
+          facingMode: 'environment' // Use back camera if available
+        } 
+      });
+      
+      // For now, use a simple prompt as a fallback
+      // In a real implementation, you would integrate a QR scanner library
+      const scannedCode = prompt('אנא הזן את הברקוד שסרקתם:');
+      if (scannedCode) {
+        setFormData({...formData, barcode: scannedCode});
+        setAlert({ type: 'success', message: 'ברקוד נקלט בהצלחה!' });
+        setTimeout(() => setAlert(null), 3000);
+      }
+      
+      // Stop camera
+      stream.getTracks().forEach(track => track.stop());
+      
+    } catch (error) {
+      console.error('Error accessing camera:', error);
+      // If camera access fails, show vehicle selection dialog
+      setShowVehicleSelection(true);
+    } finally {
+      setShowQrScanner(false);
+    }
+  };
+
+  const handleVehicleSelect = (vehicle: any) => {
+    setFormData({...formData, barcode: vehicle.barcode});
+    setShowVehicleSelection(false);
+    setAlert({ type: 'success', message: `רכב נבחר: ${vehicle.plateNumber}` });
+    setTimeout(() => setAlert(null), 3000);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
 
-    // Simulate form submission
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    try {
+      const newReport = {
+        barcode: formData.barcode,
+        images: formData.images.map(img => img.name),
+        mileage: formData.mileage,
+        feature: formData.feature,
+        date: formData.date,
+        time: formData.time,
+        driverName: formData.driverName,
+        notes: formData.notes,
+        status: 'new'
+      };
+      
+      await apiService.createPublicReport(newReport);
+      setAlert({ type: 'success', message: 'הדיווח נשלח בהצלחה! תודה על התרומה לבטיחות הצי.' });
+      
+      // Reset form
+      setFormData({
+        barcode: '',
+        images: [],
+        mileage: '',
+        feature: '',
+        date: new Date().toISOString().split('T')[0],
+        time: new Date().toTimeString().slice(0, 5),
+        driverName: '',
+        notes: ''
+      });
+      setImagePreviews([]);
 
-    // Save to localStorage for demonstration
-    const reports = JSON.parse(localStorage.getItem('publicReports') || '[]');
-    const newReport = {
-      id: Date.now().toString(),
-      ...formData,
-      images: formData.images.map(img => img.name),
-      submittedAt: new Date().toISOString(),
-      status: 'new'
-    };
-    reports.push(newReport);
-    localStorage.setItem('publicReports', JSON.stringify(reports));
-
-    setAlert({ type: 'success', message: 'הדיווח נשלח בהצלחה! תודה על התרומה לבטיחות הצי.' });
-    
-    // Reset form
-    setFormData({
-      barcode: '',
-      images: [],
-      mileage: '',
-      feature: '',
-      date: new Date().toISOString().split('T')[0],
-      time: new Date().toTimeString().slice(0, 5),
-      driverName: '',
-      notes: ''
-    });
-
-    setIsSubmitting(false);
-    setTimeout(() => setAlert(null), 5000);
+      setTimeout(() => setAlert(null), 5000);
+    } catch (error) {
+      console.error('Error submitting report:', error);
+      setAlert({ type: 'error', message: 'שגיאה בשליחת הדיווח' });
+      setTimeout(() => setAlert(null), 5000);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const features = [
@@ -104,6 +184,63 @@ const PublicForm: React.FC<PublicFormProps> = ({ onBack }) => {
         </div>
       </header>
 
+      {/* Vehicle Selection Dialog */}
+      <Dialog open={showVehicleSelection} onOpenChange={setShowVehicleSelection}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>בחר רכב</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-gray-600">
+              לא ניתן לגשת למצלמה לסריקת ברקוד. אנא בחר את הרכב מהרשימה:
+            </p>
+            <div className="space-y-2 max-h-60 overflow-y-auto">
+              {vehicles.map((vehicle) => (
+                <div
+                  key={vehicle.id}
+                  className="flex items-center justify-between p-3 border rounded-lg cursor-pointer hover:bg-gray-50"
+                  onClick={() => handleVehicleSelect(vehicle)}
+                >
+                  <div className="flex items-center gap-3">
+                    <Car className="w-5 h-5 text-blue-600" />
+                    <div>
+                      <p className="font-medium">{vehicle.plateNumber}</p>
+                      <p className="text-sm text-gray-600">{vehicle.model}</p>
+                    </div>
+                  </div>
+                  <div className="text-xs text-gray-500">
+                    {vehicle.barcode}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2 pt-4">
+              <Button 
+                variant="outline" 
+                onClick={() => setShowVehicleSelection(false)}
+                className="flex-1"
+              >
+                ביטול
+              </Button>
+              <Button 
+                onClick={() => {
+                  const manualCode = prompt('אנא הזן את הברקוד ידנית:');
+                  if (manualCode) {
+                    setFormData({...formData, barcode: manualCode});
+                    setShowVehicleSelection(false);
+                    setAlert({ type: 'success', message: 'ברקוד נקלט בהצלחה!' });
+                    setTimeout(() => setAlert(null), 3000);
+                  }
+                }}
+                className="flex-1"
+              >
+                הזן ידנית
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {alert && (
           <Alert className={`mb-6 ${alert.type === 'success' ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'}`}>
@@ -133,16 +270,37 @@ const PublicForm: React.FC<PublicFormProps> = ({ onBack }) => {
                 
                 <div className="space-y-2">
                   <Label htmlFor="barcode">ברקוד רכב *</Label>
-                  <Input
-                    id="barcode"
-                    value={formData.barcode}
-                    onChange={(e) => setFormData({...formData, barcode: e.target.value})}
-                    placeholder="סרקו או הזינו את הברקוד"
-                    required
-                    className="text-right"
-                  />
+                  <div className="flex gap-2">
+                    <Input
+                      id="barcode"
+                      value={formData.barcode}
+                      onChange={(e) => setFormData({...formData, barcode: e.target.value})}
+                      placeholder="סרקו או הזינו את הברקוד"
+                      required
+                      className="text-right flex-1"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={startQrScanning}
+                      className="flex items-center gap-2 px-3"
+                      disabled={showQrScanner}
+                    >
+                      <Scan className="w-4 h-4" />
+                      {showQrScanner ? 'סורק...' : 'סרוק'}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setShowVehicleSelection(true)}
+                      className="flex items-center gap-2 px-3"
+                    >
+                      <Car className="w-4 h-4" />
+                      בחר
+                    </Button>
+                  </div>
                   <p className="text-xs text-gray-600">
-                    ניתן למצוא את הברקוד על לוח המכוונים או על מפתח הרכב
+                    ניתן למצוא את הברקוד על לוח המכוונים או על מפתח הרכב, או ללחוץ על "סרוק QR" לסריקה
                   </p>
                 </div>
               </div>
@@ -165,23 +323,39 @@ const PublicForm: React.FC<PublicFormProps> = ({ onBack }) => {
                     className="text-right"
                   />
                   
-                  {/* Display selected images */}
+                  {/* Display selected images with previews */}
                   {formData.images.length > 0 && (
                     <div className="space-y-2">
                       <p className="text-sm text-green-600">תמונות שנבחרו:</p>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                         {formData.images.map((file, index) => (
-                          <div key={index} className="flex items-center justify-between bg-white p-2 rounded border">
-                            <span className="text-sm truncate">{file.name}</span>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => removeImage(index)}
-                              className="text-red-600 hover:text-red-700"
-                            >
-                              <X className="w-4 h-4" />
-                            </Button>
+                          <div key={index} className="relative bg-white rounded-lg border overflow-hidden">
+                            {imagePreviews[index] && (
+                              <div className="aspect-video bg-gray-100">
+                                <img 
+                                  src={imagePreviews[index]} 
+                                  alt={`Preview ${index + 1}`}
+                                  className="w-full h-full object-cover"
+                                />
+                              </div>
+                            )}
+                            <div className="p-2">
+                              <div className="flex items-center justify-between">
+                                <span className="text-xs text-gray-600 truncate">{file.name}</span>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => removeImage(index)}
+                                  className="text-red-600 hover:text-red-700 h-6 w-6 p-0"
+                                >
+                                  <X className="w-3 h-3" />
+                                </Button>
+                              </div>
+                              <p className="text-xs text-gray-500 mt-1">
+                                {(file.size / 1024 / 1024).toFixed(1)} MB
+                              </p>
+                            </div>
                           </div>
                         ))}
                       </div>
