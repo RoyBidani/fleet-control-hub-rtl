@@ -125,7 +125,7 @@ pm2 start api-server.js --name fleet-manager
 ```
 
 ### System Access:
-- **Main Application**: http://3.121.113.142:8080
+- **Main Application**: http://PublicIP:8080
 - **Direct API**: http://localhost:3001/api
 - **Health Check**: http://localhost:3001/api/health
 
